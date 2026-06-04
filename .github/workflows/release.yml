@@ -1,0 +1,68 @@
+name: CLI Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+          - name: linux-arm64
+            runner: ubuntu-24-arm
+            triple: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Download fang-runtime
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PYTHON_SERIES=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("fang.toml").read_text()
+          match = re.search(r'^\s*python\s*=\s*"([0-9]+)\.([0-9]+)', text, re.M)
+          if not match:
+              raise SystemExit("could not find [project] python in fang.toml")
+          print(f"{match.group(1)}.{match.group(2)}")
+          PY
+          )
+          TAG=$(gh release list --repo ${{ github.repository }} \
+            --json tagName \
+            --jq '[.[] | select(.tagName | startswith("fang-runtime-v"))] | first | .tagName')
+          test -n "$TAG"
+          echo "Using runtime: $TAG"
+          ASSET="fang-runtime-${PYTHON_SERIES}-${{ matrix.platform.triple }}"
+          gh release download "$TAG" \
+            --repo ${{ github.repository }} \
+            --pattern "$ASSET" \
+            --dir runtime-dist
+          chmod +x "runtime-dist/$ASSET"
+          echo "FANG_RUNTIME_PATH=runtime-dist/$ASSET" >> "$GITHUB_ENV"
+
+      - name: Build CLI
+        run: ./build_cli.sh
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/fang-${{ matrix.platform.name }}
+            dist/fang-${{ matrix.platform.name }}.sha256

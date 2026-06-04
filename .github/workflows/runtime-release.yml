@@ -1,0 +1,76 @@
+name: Runtime Release
+
+on:
+  push:
+    tags:
+      - "fang-runtime-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.platform.name }}
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: linux-arm64
+            runner: ubuntu-24-arm
+            target: aarch64-unknown-linux-gnu
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd
+          python3 -m venv .venv-build
+          . .venv-build/bin/activate
+          python -m pip install --upgrade pip
+          python -m pip install blake3 zstandard
+          echo "$PWD/.venv-build/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.platform.target }}-cargo-
+
+      - name: Build
+        id: runtime
+        run: |
+          PYTHON_SERIES=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          text = Path("fang.toml").read_text()
+          match = re.search(r'^\s*python\s*=\s*"([0-9]+)\.([0-9]+)', text, re.M)
+          if not match:
+              raise SystemExit("could not find [project] python in fang.toml")
+          print(f"{match.group(1)}.{match.group(2)}")
+          PY
+          )
+          echo "python_series=${PYTHON_SERIES}" >> "$GITHUB_OUTPUT"
+          ./build_runtime.sh "${PYTHON_SERIES}" ${{ matrix.platform.target }}
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            runtime-dist/fang-runtime-${{ steps.runtime.outputs.python_series }}-${{ matrix.platform.target }}
+            runtime-dist/fang-runtime-${{ steps.runtime.outputs.python_series }}-${{ matrix.platform.target }}.sha256

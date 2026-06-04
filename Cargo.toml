@@ -1,0 +1,3 @@
+[workspace]
+members = ["fang-pack", "fang-runtime", "fang-importer"]
+resolver = "2"

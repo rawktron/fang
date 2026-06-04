@@ -1,0 +1,4 @@
+[project]
+name = "fang"
+entry = "fang.__main__"
+python = "3.12.13"

@@ -1,0 +1,19 @@
+[package]
+name = "fang-runtime"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "fang-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "build-hello-archive"
+path = "tests/hello/build_archive.rs"
+
+[dependencies]
+blake3 = "1"
+fang-pack = { path = "../fang-pack" }
+fang-importer = { path = "../fang-importer" }
+libc = "0.2"
+pyo3-ffi = "0.28"

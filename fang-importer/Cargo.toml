@@ -1,0 +1,26 @@
+[package]
+name = "fang-importer"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[test]]
+name = "integration_test"
+path = "tests/integration_test.rs"
+required-features = ["extension-module"]
+
+[features]
+extension-module = ["pyo3-ffi/extension-module"]
+
+[dependencies]
+blake3 = "1"
+fang-pack = { path = "../fang-pack" }
+libc = "0.2"
+pyo3-ffi = "0.28"
+thiserror = "2"
+
+[dev-dependencies]
+fang-pack = { path = "../fang-pack" }
+tempfile = "3"
