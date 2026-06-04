@@ -1,15 +1,15 @@
 name: Runtime Release
 
 on:
-  push:
-    tags:
-      - "fang-runtime-v*"
+  release:
+    types: [published, prereleased]
 
 permissions:
   contents: write
 
 jobs:
   build:
+    if: startsWith(github.event.release.tag_name, 'fang-runtime-v')
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:

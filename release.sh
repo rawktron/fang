@@ -19,10 +19,12 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
     exit 1
 fi
 
-if git rev-parse "$TAG" &>/dev/null 2>&1; then
-    echo "ERROR: Tag '${TAG}' already exists." >&2
+if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" &>/dev/null; then
+    echo "ERROR: Tag '${TAG}' already exists on origin." >&2
     exit 1
 fi
+
+TARGET_SHA="$(git rev-parse HEAD)"
 
 require_file() {
     local path="$1"
@@ -65,14 +67,13 @@ release_runtime() {
     done
 
     echo "Uploading ${#assets[@]} macOS runtime assets for Python ${py} to ${tag}..."
-    git tag "$tag"
     gh release create "$tag" \
+        --target "$TARGET_SHA" \
         --title "$tag" \
         --notes "Runtime binaries for ${tag}." \
         --prerelease \
         "${assets[@]}"
 
-    git push origin "$tag"
     echo "Done. CI is building Linux runtime assets."
 }
 
@@ -94,14 +95,13 @@ release_cli() {
     done
 
     echo "Uploading ${#assets[@]} macOS CLI assets to ${tag}..."
-    git tag "$tag"
     gh release create "$tag" \
+        --target "$TARGET_SHA" \
         --title "$tag" \
         --notes "fang CLI ${tag}." \
         --prerelease \
         "${assets[@]}"
 
-    git push origin "$tag"
     echo "Done. CI is building Linux CLI assets."
 }
 
