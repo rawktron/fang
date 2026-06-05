@@ -395,13 +395,47 @@ fetch_and_cache() {
     echo "$tarball"
 }
 
+compat_probe_enabled() {
+    local target="$1"
+    if [[ "$(uname -s)" == "Darwin" && "$target" == *apple-darwin ]]; then
+        return 0
+    fi
+    if [[ "$(uname -s)" == "Linux" && "$target" == *linux* ]] &&
+        command -v clang >/dev/null && command -v ld.lld >/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+compat_linker_version() {
+    local target="$1"
+    if [[ "$(uname -s)" == "Darwin" && "$target" == *apple-darwin ]]; then
+        ld -v 2>&1 | sed -n '1p' | tr -d '\r'
+        return 0
+    fi
+    if [[ "$(uname -s)" == "Linux" && "$target" == *linux* ]]; then
+        {
+            clang --version 2>&1 | sed -n '1p'
+            ld.lld --version 2>&1 | sed -n '1p'
+        } | tr -d '\r'
+        return 0
+    fi
+}
+
+compat_version_path() {
+    local target="$1" safe_target
+    safe_target="$(printf "%s" "$target" | tr -c '[:alnum:]_.-' '_')"
+    echo "$(cache_dir)/linker_version_${safe_target}.txt"
+}
+
 invalidate_compat_sidecars_if_needed() {
+    local target="$1"
     local dir version_path current stored
-    [[ "$(uname -s)" == "Darwin" ]] || return 0
+    compat_probe_enabled "$target" || return 0
     dir="$(cache_dir)"
     mkdir -p "$dir"
-    version_path="${dir}/ld_version.txt"
-    current="$(ld -v 2>&1 | sed -n '1p' | tr -d '\r')"
+    version_path="$(compat_version_path "$target")"
+    current="$(compat_linker_version "$target")"
     stored=""
     [[ -f "$version_path" ]] && stored="$(tr -d '\r' < "$version_path")"
     if [[ "$stored" == "$current" ]]; then
@@ -418,7 +452,7 @@ invalidate_compat_sidecars_if_needed() {
 probe_static_lib_compat() {
     local tarball="$1" concrete="$2" target="$3" platform="$4"
     local dir artifact arch series libfile member tmpdir out
-    [[ "$(uname -s)" == "Darwin" && "$target" == *apple-darwin ]] || return 0
+    compat_probe_enabled "$target" || return 0
 
     dir="$(cache_dir)"
     artifact="$(artifact_name_for "$concrete" "$platform")"
@@ -463,7 +497,7 @@ probe_static_lib_compat() {
         return 0
     fi
 
-    log "Probing macOS linker compatibility for ${artifact}"
+    log "Probing linker compatibility for ${artifact}"
     tmpdir="$(mktemp -d)"
     if ! tar -x --zstd -f "$tarball" -C "$tmpdir" "$member" 2>/dev/null; then
         rm -rf "$tmpdir"
@@ -472,11 +506,16 @@ probe_static_lib_compat() {
         rm -f "$tarball" "${tarball}.sha256" "${dir}/${artifact}.compat"
         return 1
     fi
-    out="$(ld -arch "$arch" -o /dev/null "${tmpdir}/${member}" 2>&1 || true)"
+
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        out="$(ld -arch "$arch" -o /dev/null "${tmpdir}/${member}" 2>&1 || true)"
+    else
+        out="$(ld.lld -r -o /dev/null --whole-archive "${tmpdir}/${member}" --no-whole-archive 2>&1 || true)"
+    fi
     rm -rf "$tmpdir"
 
-    if grep -q "Unknown attribute kind\|could not parse bitcode" <<<"$out"; then
-        warn "CPython artifact is incompatible with host ld; trying the next candidate: ${artifact}"
+    if grep -q "Unknown attribute kind\|could not parse bitcode\|Invalid record\|file format not recognized" <<<"$out"; then
+        warn "CPython artifact is incompatible with host linker; trying the next candidate: ${artifact}"
         printf "%s\n" "$COMPAT_MARKER" > "${dir}/${artifact}.incompat"
         rm -f "$tarball" "${tarball}.sha256" "${dir}/${artifact}.compat"
         return 1
@@ -489,7 +528,7 @@ probe_static_lib_compat() {
 known_incompatible() {
     local concrete="$1" target="$2" platform="$3"
     local dir artifact
-    [[ "$(uname -s)" == "Darwin" && "$target" == *apple-darwin ]] || return 1
+    compat_probe_enabled "$target" || return 1
     [[ -n "${FANG_CPYTHON_REPROBE:-}" ]] && return 1
     dir="$(cache_dir)"
     artifact="$(artifact_name_for "$concrete" "$platform")"
@@ -515,7 +554,7 @@ ensure_cpython_tarball() {
     kind="$(version_kind "$py")"
     log "Resolving CPython ${py} for ${platform}"
     log "CPython cache: $(cache_dir)"
-    invalidate_compat_sidecars_if_needed
+    invalidate_compat_sidecars_if_needed "$target"
 
     if [[ "$kind" == "concrete" ]]; then
         candidates=("$py")
