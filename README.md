@@ -18,6 +18,27 @@ Python apps are hard to distribute. fang solves that by embedding a statically-l
 
 On Linux, C extensions load via `memfd_create` and never touch disk. On macOS, they're cached in `~/Library/Caches/<app>/` on first run and loaded from there after. Either way, startup time is within ~50ms of a plain `python` invocation.
 
+## Installation
+
+```bash
+brew tap rawktron/fang
+brew install fang
+```
+
+Or install without tapping:
+
+```bash
+brew install rawktron/fang/fang
+```
+
+Manual release binaries are also available:
+
+```bash
+curl -L -o fang https://github.com/rawktron/fang/releases/download/v0.1.0/fang-macos-arm64
+chmod +x fang
+sudo mv fang /usr/local/bin/fang
+```
+
 ## Usage
 
 ```bash
@@ -60,27 +81,6 @@ native-libs = ["libSDL2"]  # usually auto-detected
 | macOS x86_64   | Supported |
 | Windows        | Not yet   |
 
-## Installation
-
-```bash
-brew tap rawktron/fang
-brew install fang
-```
-
-Or install without tapping:
-
-```bash
-brew install rawktron/fang/fang
-```
-
-Manual release binaries are also available:
-
-```bash
-curl -L -o fang https://github.com/rawktron/fang/releases/download/v0.1.0/fang-macos-arm64
-chmod +x fang
-sudo mv fang /usr/local/bin/fang
-```
-
 ## Development
 
 The fang CLI is pure Python. You do **not** need a Rust toolchain to work on it.
@@ -121,4 +121,4 @@ export FANG_RUNTIME_PATH=./target/release/fang-runtime
 
 ## License
 
-Licensed under either of [Apache 2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT) at your option.
+Licensed under either of [Apache-2.0](LICENSE) or [MIT](LICENSE-MIT) at your option.
