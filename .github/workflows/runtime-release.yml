@@ -20,7 +20,7 @@ jobs:
             runner: ubuntu-latest
             target: x86_64-unknown-linux-gnu
           - name: linux-arm64
-            runner: ubuntu-24-arm
+            runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
 
     steps:
@@ -34,7 +34,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y zstd
+          sudo apt-get install -y binutils zstd
           python3 -m venv .venv-build
           . .venv-build/bin/activate
           python -m pip install --upgrade pip

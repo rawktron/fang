@@ -340,6 +340,7 @@ fn embed_archive_section() {
         // ld: create a relocatable object with the section, then link it in.
         let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
         let obj = out_dir.join("fang_assets.o");
+        let raw_obj = out_dir.join("fang_assets_raw.o");
         let status = std::process::Command::new("ld")
             .args([
                 "-r",
@@ -347,11 +348,20 @@ fn embed_archive_section() {
                 abs.to_str().unwrap(),
                 "--format=default",
                 "-o",
-                obj.to_str().unwrap(),
+                raw_obj.to_str().unwrap(),
             ])
             .status()
             .unwrap_or_else(|e| panic!("ld failed: {e}"));
         assert!(status.success(), "ld failed to create fang_assets.o");
+
+        let status = std::process::Command::new("objcopy")
+            .arg("--rename-section")
+            .arg(".data=fang_assets,alloc,load,readonly,data,contents")
+            .arg(&raw_obj)
+            .arg(&obj)
+            .status()
+            .unwrap_or_else(|e| panic!("objcopy failed: {e}"));
+        assert!(status.success(), "objcopy failed to create fang_assets.o");
         println!("cargo:rustc-link-arg={}", obj.display());
     }
 }

@@ -2,32 +2,118 @@
 
 #[cfg(target_os = "linux")]
 pub fn section_bytes() -> crate::Result<Vec<u8>> {
-    // Try ELF linker symbols first (compile-time embedded via FANG_ARCHIVE).
-    if let Ok(data) = section_bytes_from_elf_symbols() {
-        return Ok(data);
-    }
-    // Fall back to FANGPACK trailer (Python fang build output).
     let exe_path = std::env::current_exe().map_err(|_| crate::Error::SectionNotFound)?;
     let data = std::fs::read(&exe_path).map_err(|_| crate::Error::SectionNotFound)?;
+
+    // Try the ELF section first (compile-time embedded via FANG_ARCHIVE).
+    if let Ok(data) = extract_elf_section(&data) {
+        return Ok(data);
+    }
+
+    // Fall back to FANGPACK trailer (Python fang build output).
     extract_trailer(&data)
 }
 
 #[cfg(target_os = "linux")]
-fn section_bytes_from_elf_symbols() -> crate::Result<Vec<u8>> {
-    extern "C" {
-        static __start_fang_assets: u8;
-        static __stop_fang_assets: u8;
+fn extract_elf_section(data: &[u8]) -> crate::Result<Vec<u8>> {
+    const ELF_HEADER_SIZE: usize = 64;
+    const ELF_MAGIC: &[u8; 4] = b"\x7fELF";
+    const ELF_CLASS_64: u8 = 2;
+    const ELF_DATA_LE: u8 = 1;
+    const SH_NAME_OFFSET: usize = 0;
+    const SH_OFFSET_OFFSET: usize = 24;
+    const SH_SIZE_OFFSET: usize = 32;
+
+    if data.len() < ELF_HEADER_SIZE
+        || &data[0..4] != ELF_MAGIC
+        || data[4] != ELF_CLASS_64
+        || data[5] != ELF_DATA_LE
+    {
+        return Err(crate::Error::SectionNotFound);
     }
-    let data = unsafe {
-        let start = std::ptr::addr_of!(__start_fang_assets);
-        let end = std::ptr::addr_of!(__stop_fang_assets);
-        let len = end.offset_from(start);
-        if len <= 0 {
-            return Err(crate::Error::SectionNotFound);
+
+    let section_header_offset = read_u64(data, 40)? as usize;
+    let section_header_size = read_u16(data, 58)? as usize;
+    let section_count = read_u16(data, 60)? as usize;
+    let section_name_index = read_u16(data, 62)? as usize;
+
+    if section_header_size < ELF_HEADER_SIZE
+        || section_count == 0
+        || section_name_index >= section_count
+    {
+        return Err(crate::Error::SectionNotFound);
+    }
+    let section_headers_size = section_count
+        .checked_mul(section_header_size)
+        .ok_or(crate::Error::SectionNotFound)?;
+    if section_header_offset
+        .checked_add(section_headers_size)
+        .filter(|end| *end <= data.len())
+        .is_none()
+    {
+        return Err(crate::Error::SectionNotFound);
+    }
+
+    let shstr_header = section_header_offset + section_name_index * section_header_size;
+    let shstr_offset = read_u64(data, shstr_header + SH_OFFSET_OFFSET)? as usize;
+    let shstr_size = read_u64(data, shstr_header + SH_SIZE_OFFSET)? as usize;
+    let shstr = data
+        .get(shstr_offset..shstr_offset.saturating_add(shstr_size))
+        .ok_or(crate::Error::SectionNotFound)?;
+
+    for i in 0..section_count {
+        let header = section_header_offset + i * section_header_size;
+        let name_offset = read_u32(data, header + SH_NAME_OFFSET)? as usize;
+        let section_offset = read_u64(data, header + SH_OFFSET_OFFSET)? as usize;
+        let section_size = read_u64(data, header + SH_SIZE_OFFSET)? as usize;
+
+        let name = section_name(shstr, name_offset)?;
+        if name == b"fang_assets" || name == b".fang_assets" {
+            let section = data
+                .get(section_offset..section_offset.saturating_add(section_size))
+                .ok_or(crate::Error::SectionNotFound)?;
+            if section.is_empty() {
+                return Err(crate::Error::SectionNotFound);
+            }
+            return Ok(section.to_vec());
         }
-        std::slice::from_raw_parts(start, len as usize)
-    };
-    Ok(data.to_vec())
+    }
+
+    Err(crate::Error::SectionNotFound)
+}
+
+#[cfg(target_os = "linux")]
+fn read_u16(data: &[u8], offset: usize) -> crate::Result<u16> {
+    let bytes = data
+        .get(offset..offset + 2)
+        .ok_or(crate::Error::SectionNotFound)?;
+    Ok(u16::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+#[cfg(target_os = "linux")]
+fn read_u32(data: &[u8], offset: usize) -> crate::Result<u32> {
+    let bytes = data
+        .get(offset..offset + 4)
+        .ok_or(crate::Error::SectionNotFound)?;
+    Ok(u32::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+#[cfg(target_os = "linux")]
+fn read_u64(data: &[u8], offset: usize) -> crate::Result<u64> {
+    let bytes = data
+        .get(offset..offset + 8)
+        .ok_or(crate::Error::SectionNotFound)?;
+    Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+}
+
+#[cfg(target_os = "linux")]
+fn section_name(shstr: &[u8], offset: usize) -> crate::Result<&[u8]> {
+    let rest = shstr.get(offset..).ok_or(crate::Error::SectionNotFound)?;
+    let end = rest
+        .iter()
+        .position(|b| *b == 0)
+        .ok_or(crate::Error::SectionNotFound)?;
+    Ok(&rest[..end])
 }
 
 // ── macOS ─────────────────────────────────────────────────────────────────────
@@ -52,7 +138,7 @@ fn extract_fang_section(data: &[u8]) -> crate::Result<Vec<u8>> {
     const LC_SEGMENT_64: u32 = 0x19;
     const MACH_HEADER_SIZE: usize = 32;
     const SEGMENT_CMD_SIZE: usize = 72; // sizeof(segment_command_64)
-    const SECTION_64_SIZE: usize = 80;  // sizeof(section_64)
+    const SECTION_64_SIZE: usize = 80; // sizeof(section_64)
 
     if data.len() < MACH_HEADER_SIZE {
         return Err(crate::Error::SectionNotFound);
@@ -69,16 +155,14 @@ fn extract_fang_section(data: &[u8]) -> crate::Result<Vec<u8>> {
             break;
         }
         let cmd = u32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-        let cmdsize =
-            u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
+        let cmdsize = u32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as usize;
 
         if cmd == LC_SEGMENT_64 && data.len() >= offset + SEGMENT_CMD_SIZE {
             // segname is at offset+8, 16 bytes
             if data[offset + 8..offset + 24].starts_with(b"__FANG") {
                 // nsects is at offset+64 within segment_command_64
-                let nsects = u32::from_le_bytes(
-                    data[offset + 64..offset + 68].try_into().unwrap(),
-                ) as usize;
+                let nsects =
+                    u32::from_le_bytes(data[offset + 64..offset + 68].try_into().unwrap()) as usize;
                 let mut sect_off = offset + SEGMENT_CMD_SIZE;
                 for _ in 0..nsects {
                     if data.len() < sect_off + SECTION_64_SIZE {
@@ -122,9 +206,13 @@ pub(crate) fn extract_trailer(data: &[u8]) -> crate::Result<Vec<u8>> {
     // appended after the Fang trailer; use its dataoff as the logical EOF.
     let logical_eof = {
         #[cfg(target_os = "macos")]
-        { code_signature_dataoff(data).unwrap_or(data.len()) }
+        {
+            code_signature_dataoff(data).unwrap_or(data.len())
+        }
         #[cfg(not(target_os = "macos"))]
-        { data.len() }
+        {
+            data.len()
+        }
     };
 
     if logical_eof < TRAILER_SIZE || logical_eof > data.len() {
@@ -205,13 +293,19 @@ mod tests {
     fn magic_mismatch_returns_section_not_found() {
         let mut data = vec![0u8; 100];
         data[92..100].copy_from_slice(b"WRONGMAG");
-        assert!(matches!(extract_trailer(&data), Err(Error::SectionNotFound)));
+        assert!(matches!(
+            extract_trailer(&data),
+            Err(Error::SectionNotFound)
+        ));
     }
 
     #[test]
     fn too_short_returns_section_not_found() {
         let data = vec![0u8; 10];
-        assert!(matches!(extract_trailer(&data), Err(Error::SectionNotFound)));
+        assert!(matches!(
+            extract_trailer(&data),
+            Err(Error::SectionNotFound)
+        ));
     }
 
     #[test]
@@ -234,7 +328,10 @@ mod tests {
         let bad_len: u64 = 9999;
         data[84..92].copy_from_slice(&bad_len.to_le_bytes());
         data[92..100].copy_from_slice(b"FANGPACK");
-        assert!(matches!(extract_trailer(&data), Err(Error::SectionNotFound)));
+        assert!(matches!(
+            extract_trailer(&data),
+            Err(Error::SectionNotFound)
+        ));
     }
 
     // ── extract_fang_section tests ────────────────────────────────────────────
@@ -337,11 +434,8 @@ mod tests {
         let archive_len = archive.len() as u64;
         let fake_sig = b"fake codesig data";
 
-        let sig_offset = MACH_HEADER_64_SIZE
-            + LC_CODE_SIGNATURE_SIZE
-            + payload.len()
-            + archive.len()
-            + 16;
+        let sig_offset =
+            MACH_HEADER_64_SIZE + LC_CODE_SIGNATURE_SIZE + payload.len() + archive.len() + 16;
 
         let mut data = Vec::new();
 

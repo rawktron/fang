@@ -20,7 +20,7 @@ jobs:
             runner: ubuntu-latest
             triple: x86_64-unknown-linux-gnu
           - name: linux-arm64
-            runner: ubuntu-24-arm
+            runner: ubuntu-24.04-arm
             triple: aarch64-unknown-linux-gnu
 
     steps:
@@ -33,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          set -euo pipefail
           PYTHON_SERIES=$(python3 - <<'PY'
           import re
           from pathlib import Path
@@ -44,12 +45,22 @@ jobs:
           print(f"{match.group(1)}.{match.group(2)}")
           PY
           )
-          TAG=$(gh release list --repo ${{ github.repository }} \
-            --json tagName \
-            --jq '[.[] | select(.tagName | startswith("fang-runtime-v"))] | first | .tagName')
-          test -n "$TAG"
-          echo "Using runtime: $TAG"
+          TAG="fang-runtime-${{ github.event.release.tag_name }}"
           ASSET="fang-runtime-${PYTHON_SERIES}-${{ matrix.platform.triple }}"
+          echo "Using runtime release: ${TAG}"
+          echo "Waiting for runtime asset: ${ASSET}"
+          for attempt in {1..60}; do
+            if gh release view "$TAG" --repo ${{ github.repository }} \
+              --json assets --jq '.assets[].name' 2>/dev/null | grep -qx "$ASSET"; then
+              break
+            fi
+            if [[ "$attempt" == 60 ]]; then
+              echo "ERROR: runtime asset ${ASSET} was not found on ${TAG} after 30 minutes" >&2
+              exit 1
+            fi
+            echo "Runtime asset is not available yet (${attempt}/60); sleeping 30s"
+            sleep 30
+          done
           gh release download "$TAG" \
             --repo ${{ github.repository }} \
             --pattern "$ASSET" \
