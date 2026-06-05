@@ -599,10 +599,22 @@ build_one() {
     log "Building ${asset} with cargo"
     rustup target add "$target" 2>/dev/null || true
 
-    FANG_PYTHON_VERSION="$py" \
-    FANG_CPYTHON_TARBALL="$tarball" \
-    PYO3_CONFIG_FILE="$(pyo3_cfg "$py")" \
-        cargo build -p fang-runtime --release --target "$target"
+    local cargo_env=(
+        "FANG_PYTHON_VERSION=$py"
+        "FANG_CPYTHON_TARBALL=$tarball"
+        "PYO3_CONFIG_FILE=$(pyo3_cfg "$py")"
+    )
+    if [[ "$target" == *linux* ]] && command -v clang >/dev/null && command -v ld.lld >/dev/null; then
+        local linker_var target_env rustflags
+        target_env="$(printf "%s" "$target" | tr '[:lower:]-' '[:upper:]_')"
+        linker_var="CARGO_TARGET_${target_env}_LINKER"
+        rustflags="${RUSTFLAGS:-}"
+        log "Using clang/lld linker for ${target}"
+        cargo_env+=("${linker_var}=clang")
+        cargo_env+=("RUSTFLAGS=${rustflags:+${rustflags} }-C link-arg=-fuse-ld=lld")
+    fi
+
+    env "${cargo_env[@]}" cargo build -p fang-runtime --release --target "$target"
 
     cp "target/${target}/release/fang-runtime" "${OUT}/${asset}"
     sha256_of "${OUT}/${asset}" > "${OUT}/${asset}.sha256"
