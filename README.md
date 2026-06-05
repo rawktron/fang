@@ -117,7 +117,7 @@ export FANG_RUNTIME_PATH=./target/release/fang-runtime
 
 ## Author
 
-[Pete Garcin](mailto:pete@rawktron.com)
+Pete Garcin
 
 ## License
 
