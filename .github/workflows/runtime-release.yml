@@ -42,7 +42,7 @@ jobs:
       - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y binutils clang lld zstd
+          sudo apt-get install -y binutils clang zstd
           python3 -m venv .venv-build
           . .venv-build/bin/activate
           python -m pip install --upgrade pip

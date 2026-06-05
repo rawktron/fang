@@ -401,7 +401,30 @@ compat_probe_enabled() {
         return 0
     fi
     if [[ "$(uname -s)" == "Linux" && "$target" == *linux* ]] &&
-        command -v clang >/dev/null && command -v ld.lld >/dev/null; then
+        command -v clang >/dev/null && rust_lld_path "$target" >/dev/null; then
+        return 0
+    fi
+    return 1
+}
+
+rust_lld_dir() {
+    local target="$1" sysroot dir
+    sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+    [[ -n "$sysroot" ]] || return 1
+    dir="${sysroot}/lib/rustlib/${target}/bin/gcc-ld"
+    [[ -d "$dir" ]] || return 1
+    echo "$dir"
+}
+
+rust_lld_path() {
+    local target="$1" dir
+    dir="$(rust_lld_dir "$target")" || return 1
+    if [[ -x "${dir}/ld.lld" ]]; then
+        echo "${dir}/ld.lld"
+        return 0
+    fi
+    if [[ -x "${dir}/rust-lld" ]]; then
+        echo "${dir}/rust-lld"
         return 0
     fi
     return 1
@@ -414,9 +437,11 @@ compat_linker_version() {
         return 0
     fi
     if [[ "$(uname -s)" == "Linux" && "$target" == *linux* ]]; then
+        local lld
+        lld="$(rust_lld_path "$target")"
         {
             clang --version 2>&1 | sed -n '1p'
-            ld.lld --version 2>&1 | sed -n '1p'
+            "$lld" --version 2>&1 | sed -n '1p'
         } | tr -d '\r'
         return 0
     fi
@@ -510,7 +535,9 @@ probe_static_lib_compat() {
     if [[ "$(uname -s)" == "Darwin" ]]; then
         out="$(ld -arch "$arch" -o /dev/null "${tmpdir}/${member}" 2>&1 || true)"
     else
-        out="$(ld.lld -r -o /dev/null --whole-archive "${tmpdir}/${member}" --no-whole-archive 2>&1 || true)"
+        local lld
+        lld="$(rust_lld_path "$target")"
+        out="$("$lld" -r -o /dev/null --whole-archive "${tmpdir}/${member}" --no-whole-archive 2>&1 || true)"
     fi
     rm -rf "$tmpdir"
 
@@ -632,25 +659,26 @@ build_one() {
     fi
 
     log "Preparing runtime build for Python ${py} target ${target}"
+    rustup target add "$target" 2>/dev/null || true
     tarball="$(ensure_cpython_tarball "$py" "$target")"
     asset="fang-runtime-${py}-${target}"
 
     log "Building ${asset} with cargo"
-    rustup target add "$target" 2>/dev/null || true
 
     local cargo_env=(
         "FANG_PYTHON_VERSION=$py"
         "FANG_CPYTHON_TARBALL=$tarball"
         "PYO3_CONFIG_FILE=$(pyo3_cfg "$py")"
     )
-    if [[ "$target" == *linux* ]] && command -v clang >/dev/null && command -v ld.lld >/dev/null; then
-        local linker_var target_env rustflags
+    if [[ "$target" == *linux* ]] && command -v clang >/dev/null && rust_lld_dir "$target" >/dev/null; then
+        local linker_var target_env rustflags lld_dir
         target_env="$(printf "%s" "$target" | tr '[:lower:]-' '[:upper:]_')"
         linker_var="CARGO_TARGET_${target_env}_LINKER"
         rustflags="${RUSTFLAGS:-}"
-        log "Using clang/lld linker for ${target}"
+        lld_dir="$(rust_lld_dir "$target")"
+        log "Using clang with Rust bundled lld for ${target}"
         cargo_env+=("${linker_var}=clang")
-        cargo_env+=("RUSTFLAGS=${rustflags:+${rustflags} }-C link-arg=-fuse-ld=lld")
+        cargo_env+=("RUSTFLAGS=${rustflags:+${rustflags} }-C link-arg=-B${lld_dir} -C link-arg=-fuse-ld=lld")
     fi
 
     env "${cargo_env[@]}" cargo build -p fang-runtime --release --target "$target"
