@@ -3,13 +3,18 @@ name: Runtime Release
 on:
   release:
     types: [published, prereleased]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Runtime release tag, for example fang-runtime-v0.1.0
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build:
-    if: startsWith(github.event.release.tag_name, 'fang-runtime-v')
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'fang-runtime-v')
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -71,6 +76,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           files: |
             runtime-dist/fang-runtime-${{ steps.runtime.outputs.python_series }}-${{ matrix.platform.target }}
             runtime-dist/fang-runtime-${{ steps.runtime.outputs.python_series }}-${{ matrix.platform.target }}.sha256

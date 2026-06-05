@@ -3,13 +3,18 @@ name: CLI Release
 on:
   release:
     types: [published, prereleased]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: CLI release tag, for example v0.1.0
+        required: true
 
 permissions:
   contents: write
 
 jobs:
   build:
-    if: startsWith(github.event.release.tag_name, 'v')
+    if: startsWith(github.event.release.tag_name || inputs.tag, 'v')
     name: ${{ matrix.platform.name }}
     runs-on: ${{ matrix.platform.runner }}
     strategy:
@@ -32,6 +37,7 @@ jobs:
       - name: Download fang-runtime
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
           set -euo pipefail
           PYTHON_SERIES=$(python3 - <<'PY'
@@ -45,7 +51,7 @@ jobs:
           print(f"{match.group(1)}.{match.group(2)}")
           PY
           )
-          TAG="fang-runtime-${{ github.event.release.tag_name }}"
+          TAG="fang-runtime-${RELEASE_TAG}"
           ASSET="fang-runtime-${PYTHON_SERIES}-${{ matrix.platform.triple }}"
           echo "Using runtime release: ${TAG}"
           echo "Waiting for runtime asset: ${ASSET}"
@@ -74,6 +80,7 @@ jobs:
       - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
           files: |
             dist/fang-${{ matrix.platform.name }}
             dist/fang-${{ matrix.platform.name }}.sha256
