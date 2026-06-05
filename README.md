@@ -63,9 +63,22 @@ native-libs = ["libSDL2"]  # usually auto-detected
 ## Installation
 
 ```bash
-pip install fang
-# or
-uv tool install fang
+brew tap rawktron/fang
+brew install fang
+```
+
+Or install without tapping:
+
+```bash
+brew install rawktron/fang/fang
+```
+
+Manual release binaries are also available:
+
+```bash
+curl -L -o fang https://github.com/rawktron/fang/releases/download/v0.1.0/fang-macos-arm64
+chmod +x fang
+sudo mv fang /usr/local/bin/fang
 ```
 
 ## Development
